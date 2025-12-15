@@ -35,7 +35,6 @@ The preprocessing pipeline consists of four main stages:
    - Inspect statistics (number of clips, duration, length distributions, etc.).  
    - Check for missing or problematic samples.
 
-Additional notebooks (`draft*.ipynb`, `ss1.ipynb`) contain development versions and helper utilities used during pipeline design.
 
 ---
 
@@ -48,8 +47,4 @@ Typical layout of this repository:
 ├─ EDA.ipynb              # Exploratory data analysis on processed data
 ├─ VideoToCsv.ipynb       # Whisper-based transcription & alignment
 ├─ cropvideo.ipynb        # Face/mouth detection and cropping
-├─ draft.ipynb            # Prototype / scratch code (not required for main pipeline)
-├─ draft2.ipynb
-├─ draft3.ipynb
-├─ ss1.ipynb              # Additional experiments / utilities
 └─ README.md
