@@ -1,0 +1,19 @@
+# Data Processing and Conversion
+pandas>=1.0.0
+numpy>=1.18.0
+editdistance>=0.5.0
+
+# Video Processing
+opencv-python>=4.5.0
+moviepy>=1.0.0
+
+# Machine Learning and Training
+torch>=1.7.0
+scipy>=1.4.0
+tqdm>=4.0.0
+pyctcdecode>=0.5.0
+
+# Visualization
+matplotlib>=3.0.0
+
+
