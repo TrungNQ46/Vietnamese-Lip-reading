@@ -12,6 +12,8 @@ from tqdm import tqdm
 from transforms import TextTransform
 from utils import save_vid_aud_txt, split_file
 
+import torch
+
 warnings.filterwarnings("ignore")
 
 # Argument Parsing
@@ -53,17 +55,10 @@ parser.add_argument(
     help="Name of dataset",
 )
 parser.add_argument(
-    "--gpu_type",
-    type=str,
-    required=True,
-    default="cuda",
-    help="GPU type, either mps or cuda. (Default: cuda)",
-)
-parser.add_argument(
     "--seg-duration",
     type=int,
-    default=16,
-    help="Max duration (second) for each segment, (Default: 16)",
+    default=24,
+    help="Max duration (second) for each segment, (Default: 24)",
 )
 parser.add_argument(
     "--combine-av",
@@ -90,11 +85,9 @@ dataset = args.dataset
 text_transform = TextTransform()
 
 # Load Data
-args.data_dir = os.path.normpath(args.data_dir)
-if args.gpu_type != "cuda" or "mps":
-    raise ValueError("Invalid GPU type. Valid values for gpu_type are \"cuda\" and \"mps\". ")
+# args.data_dir = os.path.normpath(args.data_dir)
 vid_dataloader = AVSRDataLoader(
-    modality="video", detector=args.detector, convert_gray=False, gpu_type=args.gpu_type
+    modality="video", detector=args.detector, convert_gray=False
 )
 aud_dataloader = AVSRDataLoader(modality="audio")
 
@@ -105,9 +98,11 @@ seg_aud_len = seg_duration * 16000
 label_filename = os.path.join(
     args.root_dir,
     "labels",
-    f"{dataset}_{args.subset}_transcript_lengths_seg{seg_duration}s.csv"
-    if args.groups <= 1
-    else f"{dataset}_{args.subset}_transcript_lengths_seg{seg_duration}s.{args.groups}.{args.job_index}.csv",
+    (
+        f"{dataset}_{args.subset}_transcript_lengths_seg{seg_duration}s.csv"
+        if args.groups <= 1
+        else f"{dataset}_{args.subset}_transcript_lengths_seg{seg_duration}s.{args.groups}.{args.job_index}.csv"
+    ),
 )
 os.makedirs(os.path.dirname(label_filename), exist_ok=True)
 print(f"Directory {os.path.dirname(label_filename)} created")
@@ -140,25 +135,29 @@ if dataset == "lrs3":
 elif dataset == "lrs2":
     if args.subset in ["val", "test"]:
         filenames = [
-            os.path.join(args.data_dir, "main", _.split()[0] + ".mp4")
+            os.path.join(args.data_dir, _.split()[0] + ".mp4")
             for _ in open(
-                os.path.join(os.path.dirname(args.data_dir), args.subset) + ".txt"
+                os.path.join(os.path.dirname(args.data_dir), "data_split", args.subset)
+                + ".txt"
             )
             .read()
             .splitlines()
         ]
     elif args.subset == "train":
         filenames = [
-            os.path.join(args.data_dir, "main", _.split()[0] + ".mp4")
+            os.path.join(args.data_dir, _.split()[0] + ".mp4")
             for _ in open(
-                os.path.join(os.path.dirname(args.data_dir), args.subset) + ".txt"
+                os.path.join(os.path.dirname(args.data_dir), "data_split", args.subset)
+                + ".txt"
             )
             .read()
             .splitlines()
         ]
         pretrain_filenames = [
             os.path.join(args.data_dir, "pretrain", _.split()[0] + ".mp4")
-            for _ in open(os.path.join(os.path.dirname(args.data_dir), "pretrain.txt"))
+            for _ in open(
+                os.path.join(os.path.dirname(args.data_dir), "data_split", "pretrain.txt")
+            )
             .read()
             .splitlines()
         ]
@@ -169,7 +168,6 @@ elif dataset == "lrs2":
 
 unit = math.ceil(len(filenames) * 1.0 / args.groups)
 filenames = filenames[args.job_index * unit : (args.job_index + 1) * unit]
-
 for data_filename in tqdm(filenames):
     if args.landmarks_dir:
         landmarks_filename = (
@@ -180,8 +178,9 @@ for data_filename in tqdm(filenames):
         landmarks = None
     try:
         video_data = vid_dataloader.load_data(data_filename, landmarks)
-        audio_data = aud_dataloader.load_data(data_filename)
-    except (UnboundLocalError, TypeError, OverflowError, AssertionError):
+        # audio_data = aud_dataloader.load_data(data_filename)
+    except (UnboundLocalError, TypeError, OverflowError, AssertionError) as e:
+        print(f"Error: {e}")
         continue
 
     if os.path.normpath(data_filename).split(os.sep)[-3] in [
@@ -198,18 +197,18 @@ for data_filename in tqdm(filenames):
         dst_txt_filename = (
             f"{data_filename.replace(args.data_dir, dst_txt_dir)[:-4]}.txt"
         )
-        trim_vid_data, trim_aud_data = video_data, audio_data
+        trim_vid_data, trim_aud_data = video_data, None
         text_line_list = (
             open(data_filename[:-4] + ".txt", "r").read().splitlines()[0].split(" ")
         )
         text_line = " ".join(text_line_list[2:])
         content = text_line.replace("}", "").replace("{", "")
-
-        if trim_vid_data is None or trim_aud_data is None:
+        # tqdm.write(content)
+        if trim_vid_data is None:
             continue
         video_length = len(trim_vid_data)
         audio_length = trim_aud_data.size(1)
-        if video_length == 0 or audio_length == 0:
+        if video_length == 0:
             continue
         # if audio_length/video_length < 560. or audio_length/video_length > 720. or video_length < 12:
         #    continue
@@ -251,41 +250,41 @@ for data_filename in tqdm(filenames):
             )
         )
         continue
-
     splitted = split_file(data_filename[:-4] + ".txt", max_frames=seg_vid_len)
     for i in range(len(splitted)):
         if len(splitted) == 1:
             content, start, end, duration = splitted[i]
-            trim_vid_data, trim_aud_data = video_data, audio_data
+            trim_vid_data, trim_aud_data = video_data, None
         else:
             content, start, end, duration = splitted[i]
             start_idx, end_idx = int(start * 25), int(end * 25)
             try:
                 trim_vid_data, trim_aud_data = (
                     video_data[start_idx:end_idx],
-                    audio_data[:, start_idx * 640 : end_idx * 640],
+                    # audio_data[:, start_idx * 640 : end_idx * 640],
+                    None,
                 )
             except TypeError:
+                print(f"Error: {data_filename}")
                 continue
         dst_vid_filename = (
             f"{data_filename.replace(args.data_dir, dst_vid_dir)[:-4]}_{i:02d}.mp4"
         )
-        dst_aud_filename = (
-            f"{data_filename.replace(args.data_dir, dst_vid_dir)[:-4]}_{i:02d}.wav"
-        )
+        # dst_aud_filename = (
+        #     f"{data_filename.replace(args.data_dir, dst_vid_dir)[:-4]}_{i:02d}.wav"
+        # )
         dst_txt_filename = (
             f"{data_filename.replace(args.data_dir, dst_txt_dir)[:-4]}_{i:02d}.txt"
         )
-
-        if trim_vid_data is None or trim_aud_data is None:
+        if trim_vid_data is None:
             continue
         video_length = len(trim_vid_data)
-        audio_length = trim_aud_data.size(1)
-        if video_length == 0 or audio_length == 0:
+        # audio_length = trim_aud_data.size(1)
+        if video_length == 0:
             continue
         save_vid_aud_txt(
             dst_vid_filename,
-            dst_aud_filename,
+            None,
             dst_txt_filename,
             trim_vid_data,
             trim_aud_data,
